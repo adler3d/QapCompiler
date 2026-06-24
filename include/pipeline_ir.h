@@ -120,7 +120,168 @@ struct Module {
 
 class IRBuilder {
 public:
-  IRBuilder() = default;
+
+  IRBuilder() 
+    : func(nullptr),
+      curBlock(0),
+      nextValue(1) {}
+  
+  // --- Управление функциями ---
+  ir::Function* func;     // текущая функция (полностью соответствует оригиналу)
+  ir::BlockId curBlock;   // текущий блок
+  ir::ValueId nextValue;  // следующий ValueId
+  
+  // --- Таблица символов ---
+  std::vector<std::unordered_map<std::string, ir::ValueId>> scopes;
+  
+  // --- Методы для управления scope ---
+  
+  void pushScope() {
+    scopes.push_back({});
+  }
+  
+  void popScope() {
+    if (!scopes.empty()) {
+      scopes.pop_back();
+    }
+  }
+  
+  void setVar(const std::string& name, ir::ValueId value) {
+    if (scopes.empty()) {
+      scopes.push_back({});
+    }
+    scopes.back()[name] = value;
+  }
+  
+  ir::ValueId findVar(const std::string& name) {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+      auto found = it->find(name);
+      if (found != it->end()) {
+        return found->second;
+      }
+    }
+    return ir::InvalidValue;
+  }
+  
+  // --- Методы из оригинала (точная сигнатура) ---
+  
+  ir::ValueId allocValue() {
+    return nextValue++;
+  }
+  
+  ir::BasicBlock& block() {
+    if (!func || curBlock >= func->blocks.size()) {
+      throw std::runtime_error("Invalid current block");
+    }
+    return func->blocks[curBlock];
+  }
+  
+  ir::ValueId emit(const ir::Instruction& src) {
+    ir::Instruction node = src;
+    node.dst = allocValue();
+    block().insts.push_back(node);
+    return node.dst;
+  }
+  
+  void emitVoid(const ir::Instruction& node) {
+    block().insts.push_back(node);
+  }
+  
+  // --- Создание констант ---
+  
+  ir::ValueId makeConstF64(double v) {
+    ir::Instruction n;
+    n.op = ir::Operation::Const;
+    n.type = 4;  // TypeId::F64 (из pipeline_arch.h, это индекс 4)
+    n.imm.f64 = v;
+    return emit(n);
+  }
+  
+  ir::ValueId makeConstI64(int64_t v) {
+    ir::Instruction n;
+    n.op = ir::Operation::Const;
+    n.type = 3;  // TypeId::I64 (индекс 3)
+    n.imm.i64 = v;
+    return emit(n);
+  }
+  
+  // --- Создание параметров ---
+  
+  ir::ValueId makeParam(arch::TypeId type, uint32_t index) {
+    ir::Instruction n;
+    n.op = ir::Operation::Param;
+    n.type = type;
+    n.imm.u64 = index;
+    return emit(n);
+  }
+  
+  // --- Бинарные операции ---
+  
+  ir::ValueId makeAdd(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
+    ir::Instruction n;
+    n.op = ir::Operation::Add;
+    n.type = type;
+    n.operand_a = a;
+    n.operand_b = b;
+    return emit(n);
+  }
+  
+  ir::ValueId makeSub(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
+    ir::Instruction n;
+    n.op = ir::Operation::Sub;
+    n.type = type;
+    n.operand_a = a;
+    n.operand_b = b;
+    return emit(n);
+  }
+  
+  ir::ValueId makeMul(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
+    ir::Instruction n;
+    n.op = ir::Operation::Mul;
+    n.type = type;
+    n.operand_a = a;
+    n.operand_b = b;
+    return emit(n);
+  }
+  
+  ir::ValueId makeDiv(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
+    ir::Instruction n;
+    n.op = ir::Operation::Div;
+    n.type = type;
+    n.operand_a = a;
+    n.operand_b = b;
+    return emit(n);
+  }
+  
+  // --- Унарные операции ---
+  
+  ir::ValueId makeNeg(arch::TypeId type, ir::ValueId a) {
+    ir::Instruction n;
+    n.op = ir::Operation::Neg;
+    n.type = type;
+    n.operand_a = a;
+    return emit(n);
+  }
+  
+  // --- Вызовы функций ---
+  
+  ir::ValueId makeCall(arch::TypeId type, ir::FunctionId fn, const std::vector<ir::ValueId>& args) {
+    ir::Instruction n;
+    n.op = ir::Operation::Call;
+    n.type = type;
+    n.fn_id = fn;
+    n.call_args = args;
+    return emit(n);
+  }
+  
+  // --- Return ---
+  
+  void makeRet(ir::ValueId v) {
+    ir::Instruction n;
+    n.op = ir::Operation::Ret;
+    n.operand_a = v;
+    emitVoid(n);
+  }
   
   void startFunction(
     FunctionId id,
@@ -129,12 +290,12 @@ public:
     const std::vector<arch::TypeId>& param_types
   ) {
     current_fn = Function{
-      .id = id,
-      .name = name,
-      .return_type = return_type,
-      .param_types = param_types,
+      /*.id = */id,
+      /*.name = */name,
+      /*.return_type = */return_type,
+      /*.param_types = */param_types,
     };
-    current_fn.blocks.push_back(BasicBlock{.id = 0, .label = "entry"});
+    current_fn.blocks.push_back(BasicBlock{/*.id = */0,/* .label = */"entry"});
     current_block_id = 0;
     next_value_id = 1;
   }
@@ -148,10 +309,6 @@ public:
         // Можем добавить error handling или неявный ret
       }
     }
-  }
-  
-  ValueId allocValue() {
-    return next_value_id++;
   }
   
   // --- Конструирование инструкций ---
@@ -229,8 +386,8 @@ public:
   BlockId createBlock(const std::string& label = "") {
     BlockId id = current_fn.blocks.size();
     current_fn.blocks.push_back(BasicBlock{
-      .id = id,
-      .label = label.empty() ? ("bb" + std::to_string(id)) : label,
+      /*.id = */id,
+      /*.label = */label.empty() ? ("bb" + std::to_string(id)) : label,
     });
     return id;
   }
@@ -292,11 +449,6 @@ private:
   BlockId current_block_id = 0;
   ValueId next_value_id = 1;
   
-  ValueId emit(const Instruction& inst) {
-    Instruction mutable_inst = inst;
-    currentBlock().insts.push_back(mutable_inst);
-    return inst.dst;
-  }
 };
 
 // ============================================================================

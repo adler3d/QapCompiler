@@ -15,271 +15,8 @@
 
 namespace ir {
 
-// Добавим методы управления scope и функциями в IRBuilder
-class IRBuilder {
-public:
-  IRBuilder() 
-    : func(nullptr),
-      curBlock(0),
-      nextValue(1) {}
-  
-  // --- Управление функциями ---
-  ir::Function* func;     // текущая функция (полностью соответствует оригиналу)
-  ir::BlockId curBlock;   // текущий блок
-  ir::ValueId nextValue;  // следующий ValueId
-  
-  // --- Таблица символов ---
-  std::vector<std::unordered_map<std::string, ir::ValueId>> scopes;
-  
-  // --- Методы для управления scope ---
-  
-  void pushScope() {
-    scopes.push_back({});
-  }
-  
-  void popScope() {
-    if (!scopes.empty()) {
-      scopes.pop_back();
-    }
-  }
-  
-  void setVar(const std::string& name, ir::ValueId value) {
-    if (scopes.empty()) {
-      scopes.push_back({});
-    }
-    scopes.back()[name] = value;
-  }
-  
-  ir::ValueId findVar(const std::string& name) {
-    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-      auto found = it->find(name);
-      if (found != it->end()) {
-        return found->second;
-      }
-    }
-    return ir::InvalidValue;
-  }
-  
-  // --- Методы из оригинала (точная сигнатура) ---
-  
-  ir::ValueId allocValue() {
-    return nextValue++;
-  }
-  
-  ir::BasicBlock& block() {
-    if (!func || curBlock >= func->blocks.size()) {
-      throw std::runtime_error("Invalid current block");
-    }
-    return func->blocks[curBlock];
-  }
-  
-  ir::ValueId emit(const ir::Instruction& src) {
-    ir::Instruction node = src;
-    node.dst = allocValue();
-    block().insts.push_back(node);
-    return node.dst;
-  }
-  
-  void emitVoid(const ir::Instruction& node) {
-    block().insts.push_back(node);
-  }
-  
-  // --- Создание констант ---
-  
-  ir::ValueId makeConstF64(double v) {
-    ir::Instruction n;
-    n.op = ir::Operation::Const;
-    n.type = 4;  // TypeId::F64 (из pipeline_arch.h, это индекс 4)
-    n.imm.f64 = v;
-    return emit(n);
-  }
-  
-  ir::ValueId makeConstI64(int64_t v) {
-    ir::Instruction n;
-    n.op = ir::Operation::Const;
-    n.type = 3;  // TypeId::I64 (индекс 3)
-    n.imm.i64 = v;
-    return emit(n);
-  }
-  
-  // --- Создание параметров ---
-  
-  ir::ValueId makeParam(arch::TypeId type, uint32_t index) {
-    ir::Instruction n;
-    n.op = ir::Operation::Param;
-    n.type = type;
-    n.imm.u64 = index;
-    return emit(n);
-  }
-  
-  // --- Бинарные операции ---
-  
-  ir::ValueId makeAdd(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
-    ir::Instruction n;
-    n.op = ir::Operation::Add;
-    n.type = type;
-    n.operand_a = a;
-    n.operand_b = b;
-    return emit(n);
-  }
-  
-  ir::ValueId makeSub(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
-    ir::Instruction n;
-    n.op = ir::Operation::Sub;
-    n.type = type;
-    n.operand_a = a;
-    n.operand_b = b;
-    return emit(n);
-  }
-  
-  ir::ValueId makeMul(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
-    ir::Instruction n;
-    n.op = ir::Operation::Mul;
-    n.type = type;
-    n.operand_a = a;
-    n.operand_b = b;
-    return emit(n);
-  }
-  
-  ir::ValueId makeDiv(arch::TypeId type, ir::ValueId a, ir::ValueId b) {
-    ir::Instruction n;
-    n.op = ir::Operation::Div;
-    n.type = type;
-    n.operand_a = a;
-    n.operand_b = b;
-    return emit(n);
-  }
-  
-  // --- Унарные операции ---
-  
-  ir::ValueId makeNeg(arch::TypeId type, ir::ValueId a) {
-    ir::Instruction n;
-    n.op = ir::Operation::Neg;
-    n.type = type;
-    n.operand_a = a;
-    return emit(n);
-  }
-  
-  // --- Вызовы функций ---
-  
-  ir::ValueId makeCall(arch::TypeId type, ir::FunctionId fn, const std::vector<ir::ValueId>& args) {
-    ir::Instruction n;
-    n.op = ir::Operation::Call;
-    n.type = type;
-    n.fn_id = fn;
-    n.call_args = args;
-    return emit(n);
-  }
-  
-  // --- Return ---
-  
-  void makeRet(ir::ValueId v) {
-    ir::Instruction n;
-    n.op = ir::Operation::Ret;
-    n.operand_a = v;
-    emitVoid(n);
-  }
-};
 
 } // namespace ir
-
-// ============================================================================
-// ТИПЫ AST (ДЛЯ СОВМЕСТИМОСТИ С ОРИГИНАЛОМ)
-// ============================================================================
-// Это ПРИМЕРЫ структур, которые должны существовать в t_calc
-
-namespace t_calc {
-
-// Используются в посетителе — совпадают ровно с оригиналом
-
-struct i_term {
-  struct i_visitor {
-    virtual ~i_visitor() = default;
-  };
-  virtual ~i_term() = default;
-  virtual void Use(i_visitor& v) = 0;
-};
-
-struct i_stat {
-  struct i_visitor {
-    virtual ~i_visitor() = default;
-  };
-  virtual ~i_stat() = default;
-  virtual void Use(i_visitor& v) = 0;
-};
-
-struct t_term : public i_term {
-  std::shared_ptr<i_term> value;
-  void Use(i_visitor& v) override;
-};
-
-struct t_number : public i_term {
-  std::string value;
-  void Use(i_visitor& v) override;
-};
-
-struct t_scope : public i_term {
-  std::shared_ptr<i_term> value;
-  void Use(i_visitor& v) override;
-};
-
-struct t_divmul : public i_term {
-  std::shared_ptr<i_term> first;
-  struct elem {
-    std::string oper;
-    std::shared_ptr<i_term> expr;
-  };
-  std::vector<elem> arr;
-  void Use(i_visitor& v) override;
-};
-
-struct t_addsub : public i_term {
-  std::shared_ptr<i_term> first;
-  struct elem {
-    std::string oper;
-    std::shared_ptr<i_term> expr;
-  };
-  std::vector<elem> arr;
-  void Use(i_visitor& v) override;
-};
-
-struct t_varcall : public i_term {
-  std::string name;
-  std::shared_ptr<i_term> params;  // может быть nullptr
-  void Use(i_visitor& v) override;
-};
-
-struct t_assign_stat : public i_stat {
-  std::string var;
-  std::shared_ptr<i_term> expr;
-  void Use(i_visitor& v) override;
-};
-
-struct t_block_stat : public i_stat {
-  std::vector<std::shared_ptr<i_stat>> arr;
-  void Use(i_visitor& v) override;
-};
-
-struct t_solo_stat : public i_stat {
-  std::shared_ptr<i_term> expr;
-  void Use(i_visitor& v) override;
-};
-
-struct t_func_stat : public i_stat {
-  std::string func;
-  struct arg_type {
-    std::string name;
-  };
-  std::vector<arg_type> args;
-  std::shared_ptr<i_stat> body;
-  void Use(i_visitor& v) override;
-};
-
-struct t_calc {
-  std::vector<std::shared_ptr<i_stat>> arr;
-};
-
-} // namespace t_calc
 
 // ============================================================================
 // AST TO SSA: ГЛАВНЫЙ VISITOR (ТОЧНОЕ СООТВЕТСТВИЕ ОРИГИНАЛУ)
@@ -323,7 +60,7 @@ struct t_ast2ssa : public t_calc::i_term::i_visitor, public t_calc::i_stat::i_vi
   // --- Специфичные Do для типов AST ---
   
   void Do(t_calc::t_term& r) { 
-    Do(r.value); 
+    if(r.value)Do(*r.value.get()); 
   }
   
   void Do(t_calc::t_number& r) {
@@ -371,7 +108,9 @@ struct t_ast2ssa : public t_calc::i_term::i_visitor, public t_calc::i_stat::i_vi
   ir::FunctionId find_function_id(const std::string& name) { 
     return 0;  // TODO: Реализовать поиск по имени
   }
-  
+  void Do(t_calc::t_call_param& r) {
+    Do(r.body);
+  }
   void Do(t_calc::t_varcall& r) {
     if (!r.params) {
       result = ir.findVar(r.name);
@@ -379,7 +118,7 @@ struct t_ast2ssa : public t_calc::i_term::i_visitor, public t_calc::i_stat::i_vi
     }
     std::vector<ir::ValueId> args;
     for (auto& arg : r.params->arr) {
-      Do(*arg.get());
+      Do(arg.body);
       args.push_back(result);
     }
     auto fn = find_function_id(r.name);
@@ -422,7 +161,7 @@ struct t_ast2ssa : public t_calc::i_term::i_visitor, public t_calc::i_stat::i_vi
       ir.setVar(r.args[i].name, v);
     }
     
-    Do(r.body);
+    if(r.body)Do(*r.body.get());
     
     ir.popScope();
     module_.funcs.push_back(std::move(fn));
