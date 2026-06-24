@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 #include <cassert>
+#include <cstdio>
 
 // ============================================================================
 // ЭТАП 6: ENCODER - Генерация x86-64 машинного кода
@@ -99,12 +100,15 @@ public:
 class RegisterEncoder {
 public:
   // Получить 3-битный код регистра (0-7)
+  // Для GPR: RAX=0, RCX=1, ..., R15=7 (с расширением через REX.B)
+  // Для XMM: XMM0=0, XMM1=1, ..., XMM15=7 (с расширением через REX.B)
   static uint8_t regCode3bit(arch::RegId reg_id) {
     const auto& spec = arch::ArchRegistry::reg(reg_id);
     return spec.x86_code & 0x07;
   }
   
   // Проверить, нужен ли REX.R/B для этого регистра
+  // REX.B нужен если регистр > 7 (т.е. R8+ для GPR или XMM8+ для XMM)
   static bool needsRexBit(arch::RegId reg_id) {
     const auto& spec = arch::ArchRegistry::reg(reg_id);
     return (spec.x86_code & 0x08) != 0;  // Если старший бит установлен
@@ -247,25 +251,33 @@ private:
   // MOVSD (double) - 0xF2 0x0F 0x10 /r (movsd xmm, xmm/m64)
   // ========================================================================
   void encodeMovsd(const machine::MachineInst& inst, CodeBuffer& buf) {
-    assert(inst.dst.kind == machine::MachineOperandKind::PhysicalReg ||
-           inst.dst.kind == machine::MachineOperandKind::ImmediateF64);
+    assert(inst.dst.kind == machine::MachineOperandKind::PhysicalReg);
     assert(inst.src1.kind == machine::MachineOperandKind::PhysicalReg ||
            inst.src1.kind == machine::MachineOperandKind::ImmediateF64);
     
     arch::RegId dst_reg = inst.dst.preg;
-    arch::RegId src_reg = inst.src1.preg;
     
-    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg - 24);  // XMM0 = 24
-    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg - 24);
-    bool dst_ext = (dst_reg >= 32);  // XMM8..15
-    bool src_ext = (src_reg >= 32);
-    
-    buf.emit8(0xF2);  // Prefix для MOVSD
-    RexBuilder::emitIfNeeded(buf, false, dst_ext, false, src_ext);
-    buf.emit8(0x0F);
-    buf.emit8(0x10);
-    uint8_t modrm = ModRmBuilder::buildRegReg(dst_code, src_code);
-    buf.emit8(modrm);
+    // Если src — это сразу регистр XMM
+    if (inst.src1.kind == machine::MachineOperandKind::PhysicalReg) {
+      arch::RegId src_reg = inst.src1.preg;
+      
+      // Оба должны быть XMM регистрами (ID >= 24)
+      assert(dst_reg >= 24 && src_reg >= 24);
+      
+      uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg);
+      uint8_t src_code = RegisterEncoder::regCode3bit(src_reg);
+      bool dst_ext = RegisterEncoder::needsRexBit(dst_reg);
+      bool src_ext = RegisterEncoder::needsRexBit(src_reg);
+      
+      buf.emit8(0xF2);  // Prefix для MOVSD
+      RexBuilder::emitIfNeeded(buf, false, dst_ext, false, src_ext);
+      buf.emit8(0x0F);
+      buf.emit8(0x10);
+      uint8_t modrm = ModRmBuilder::buildRegReg(dst_code, src_code);
+      buf.emit8(modrm);
+    } else {
+      // TODO: Загрузка из памяти
+    }
   }
   
   // ========================================================================
@@ -275,10 +287,12 @@ private:
     arch::RegId dst_reg = inst.dst.preg;
     arch::RegId src_reg = inst.src1.preg;
     
-    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg - 24);
-    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg - 24);
-    bool dst_ext = (dst_reg >= 32);
-    bool src_ext = (src_reg >= 32);
+    assert(dst_reg >= 24 && src_reg >= 24);
+    
+    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg);
+    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg);
+    bool dst_ext = RegisterEncoder::needsRexBit(dst_reg);
+    bool src_ext = RegisterEncoder::needsRexBit(src_reg);
     
     buf.emit8(0xF3);  // Prefix для MOVSS
     RexBuilder::emitIfNeeded(buf, false, dst_ext, false, src_ext);
@@ -336,10 +350,12 @@ private:
     arch::RegId dst_reg = inst.dst.preg;
     arch::RegId src_reg = inst.src1.preg;
     
-    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg - 24);
-    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg - 24);
-    bool dst_ext = (dst_reg >= 32);
-    bool src_ext = (src_reg >= 32);
+    assert(dst_reg >= 24 && src_reg >= 24);
+    
+    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg);
+    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg);
+    bool dst_ext = RegisterEncoder::needsRexBit(dst_reg);
+    bool src_ext = RegisterEncoder::needsRexBit(src_reg);
     
     buf.emit8(0xF2);
     RexBuilder::emitIfNeeded(buf, false, dst_ext, false, src_ext);
@@ -356,10 +372,12 @@ private:
     arch::RegId dst_reg = inst.dst.preg;
     arch::RegId src_reg = inst.src1.preg;
     
-    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg - 24);
-    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg - 24);
-    bool dst_ext = (dst_reg >= 32);
-    bool src_ext = (src_reg >= 32);
+    assert(dst_reg >= 24 && src_reg >= 24);
+    
+    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg);
+    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg);
+    bool dst_ext = RegisterEncoder::needsRexBit(dst_reg);
+    bool src_ext = RegisterEncoder::needsRexBit(src_reg);
     
     buf.emit8(0xF2);
     RexBuilder::emitIfNeeded(buf, false, dst_ext, false, src_ext);
@@ -376,10 +394,12 @@ private:
     arch::RegId dst_reg = inst.dst.preg;
     arch::RegId src_reg = inst.src1.preg;
     
-    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg - 24);
-    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg - 24);
-    bool dst_ext = (dst_reg >= 32);
-    bool src_ext = (src_reg >= 32);
+    assert(dst_reg >= 24 && src_reg >= 24);
+    
+    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg);
+    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg);
+    bool dst_ext = RegisterEncoder::needsRexBit(dst_reg);
+    bool src_ext = RegisterEncoder::needsRexBit(src_reg);
     
     buf.emit8(0xF2);
     RexBuilder::emitIfNeeded(buf, false, dst_ext, false, src_ext);
@@ -396,10 +416,12 @@ private:
     arch::RegId dst_reg = inst.dst.preg;
     arch::RegId src_reg = inst.src1.preg;
     
-    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg - 24);
-    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg - 24);
-    bool dst_ext = (dst_reg >= 32);
-    bool src_ext = (src_reg >= 32);
+    assert(dst_reg >= 24 && src_reg >= 24);
+    
+    uint8_t dst_code = RegisterEncoder::regCode3bit(dst_reg);
+    uint8_t src_code = RegisterEncoder::regCode3bit(src_reg);
+    bool dst_ext = RegisterEncoder::needsRexBit(dst_reg);
+    bool src_ext = RegisterEncoder::needsRexBit(src_reg);
     
     buf.emit8(0xF2);
     RexBuilder::emitIfNeeded(buf, false, dst_ext, false, src_ext);
